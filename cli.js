@@ -52,7 +52,8 @@ const getOptions = (conf) => {
         MD_FILE_NAME: 'README',
         WEB_FILE_NAME: 'HOME',
         SUPPORT_SEARCH: conf.get('supportSearch'),
-        EXCLUDE_OTHER_FILES: conf.get('excludeOtherFiles')
+        EXCLUDE_OTHER_FILES: conf.get('excludeOtherFiles'),
+        GITLAB_URL: conf.get("gitlabUrl")
     };
 };
 
@@ -69,7 +70,7 @@ module.exports = async () => {
         .option('-p, --port <n>', 'port used for serving the generated site', parseInt)
         .parse(process.argv);
 
-    let conf = { get: () => {} };
+    let conf = { get: () => { } };
     if (!program.new)
         conf = new Configstore(
             process.cwd().split(path.sep).splice(1).join('_'),

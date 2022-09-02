@@ -19,18 +19,24 @@ const {
     plantumlVersions
 } = require('./utils.js');
 const { date } = require('joi');
+const { response } = require('express');
 
 const getMime = (format) => {
     if (format == 'svg') return `image/svg+xml`;
     return `image/${format}`;
 };
 
-const httpGet = async (url) => {
+const httpGet = async (url, headers = {}) => {
     // return new pending promise
     return new Promise((resolve, reject) => {
         // select http or https module, depending on reqested url
         const lib = url.startsWith('https') ? require('https') : require('http');
-        const request = lib.get(url, (response) => {
+
+        const request = lib.request(url, {
+            headers: headers,
+            method: 'GET',
+            timeout: 10,
+        }, (response) => {
             // handle http errors
             if (response.statusCode < 200 || response.statusCode > 299) {
                 reject(new Error('Failed to load page ' + url + ', status code: ' + response.statusCode));
@@ -41,7 +47,7 @@ const httpGet = async (url) => {
             response.on('data', (chunk) => body.push(chunk));
             // we are done, resolve promise with those joined chunks
             response.on('end', () => resolve(Buffer.concat(body).toString('base64')));
-        });
+        }).end();
         // handle connection errors of the request
         request.on('error', (err) => reject(err));
     });
@@ -109,8 +115,8 @@ const generateTree = async (dir, options) => {
         const otherFiles = options.EXCLUDE_OTHER_FILES
             ? []
             : files.filter(
-                  (x) => x.charAt(0) === '_' || ['.md', '.puml'].indexOf(path.extname(x).toLowerCase()) === -1
-              );
+                (x) => x.charAt(0) === '_' || ['.md', '.puml'].indexOf(path.extname(x).toLowerCase()) === -1
+            );
 
         for (const otherFile of otherFiles) {
             if (fs.statSync(path.join(dir, otherFile)).isDirectory()) continue;
@@ -204,15 +210,58 @@ const generateImages = async (tree, options, onImageGenerated, conf) => {
     conf.set('checksums', newChecksums);
 };
 
+const downloadGitLabFile = async (id, file, options) => {
+    file = encodeURIComponent(file);
+    projectUrl = `${options.GITLAB_URL}/api/v4/projects/${id}`
+    fileUrl = `${options.GITLAB_URL}/api/v4/projects/${id}/repository/files/${file}?ref=master`;
+
+    let headers = {
+        "PRIVATE-TOKEN": process.env.GITLAB_TOKEN,
+    }
+
+    projectResp = Buffer.from(await httpGet(projectUrl, headers), "base64").toString()
+    project = JSON.parse(projectResp)
+
+    webUrl = project["web_url"]
+    baseURL = `${webUrl}/-/blob/master`
+
+    let response = '';
+    response = await httpGet(fileUrl, headers);
+
+    response = Buffer.from(response, "base64").toString();
+
+    content = Buffer.from(JSON.parse(response)["content"], "base64").toString();
+
+
+    linkRegex = /\]\(([a-z0-9_\-\/\.]+)\)/g
+
+    while ((glRef = linkRegex.exec(content)) !== null) {
+        if (glRef) {
+            content = content.replace(`(${glRef[1]})`, `(${baseURL}/${glRef[1]})`)
+        }
+    }
+
+    return content
+}
+
 const compileDocument = async (md, item, options, getDiagram) => {
     let MD = md;
     const alreadyIncludedPumls = [];
     const texts = [];
     const diagrams = [];
     const regex = /(?:!\[.*?\]\()(.*\.puml)(\))/g;
+    const gitlabRegex = /gitlab\[(\d+)\]\:(.*)/g;
+
 
     for (const mdFile of item.mdFiles) {
         let content = mdFile.toString();
+
+        let glRef
+        while ((glRef = gitlabRegex.exec(content)) !== null) {
+            if (glRef) {
+                content = content.replace(glRef[0], await downloadGitLabFile(glRef[1], glRef[2], options))
+            }
+        }
 
         let pumlRef;
         while ((pumlRef = regex.exec(content)) !== null) {
@@ -257,16 +306,16 @@ const generateCompleteMD = async (tree, options) => {
     //table of contents
     let tableOfContents = '';
     for (const item of tree)
-        tableOfContents += `${'  '.repeat(item.level - 1)}* [${item.name}](#${encodeURIPath(
+        tableOfContents += `${'  '.repeat(item.level - 1)} * [${item.name}](#${encodeURIPath(
             item.name
-        ).replace(/%20/g, '-')})\n`;
-    MD += `\n\n${tableOfContents}\n---`;
+        ).replace(/%20/g, '-')}) \n`;
+    MD += `\n\n${tableOfContents} \n-- - `;
 
     for (const item of tree) {
         let name = getFolderName(item.dir, options.ROOT_FOLDER, options.HOMEPAGE_NAME);
 
         //title
-        MD += `\n\n## ${name}`;
+        MD += `\n\n## ${name} `;
         if (name !== options.HOMEPAGE_NAME) {
             if (options.INCLUDE_BREADCRUMBS) MD += `\n\n\`${item.dir.replace(options.ROOT_FOLDER, '')}\``;
             MD += `\n\n[${options.HOMEPAGE_NAME}](#${encodeURIPath(options.PROJECT_NAME).replace(
@@ -424,9 +473,8 @@ const generateMD = async (tree, options, onProgress) => {
             let tableOfContents = '';
             for (const _item of tree) {
                 let isDown = item.level < _item.level;
-                let label = `${item.dir === _item.dir ? '**' : ''}${_item.name}${
-                    item.dir === _item.dir ? '**' : ''
-                }`;
+                let label = `${item.dir === _item.dir ? '**' : ''}${_item.name}${item.dir === _item.dir ? '**' : ''
+                    }`;
                 tableOfContents += `${'  '.repeat(_item.level - 1)}* [${label}](${encodeURIPath(
                     path.join(
                         // '/',
@@ -508,9 +556,8 @@ const generateMD = async (tree, options, onProgress) => {
                     pumlFile.isDitaa ? 'png' : options.DIAGRAM_FORMAT
                 )};base64,${imgContent})\n`;
 
-                let diagramLink = `[Download ${
-                    path.parse(pumlFile.dir).name
-                } diagram](${diagramUrl} ':ignore')`;
+                let diagramLink = `[Download ${path.parse(pumlFile.dir).name
+                    } diagram](${diagramUrl} ':ignore')`;
                 return diagramImage + diagramLink;
             } else {
                 let diagramImage = `![diagram](${diagramUrl})`;
@@ -683,9 +730,8 @@ const generateWebMD = async (tree, options) => {
                     pumlFile.isDitaa ? 'png' : options.DIAGRAM_FORMAT
                 )};base64,${imgContent})\n`;
 
-                let diagramLink = `[Download ${
-                    path.parse(pumlFile.dir).name
-                } diagram](${diagramUrl} ':ignore')`;
+                let diagramLink = `[Download ${path.parse(pumlFile.dir).name
+                    } diagram](${diagramUrl} ':ignore')`;
 
                 return diagramImage + diagramLink;
             } else {
