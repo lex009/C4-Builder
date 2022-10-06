@@ -223,7 +223,7 @@ const downloadGitLabFile = async (id, file, options) => {
     project = JSON.parse(projectResp)
 
     webUrl = project["web_url"]
-    baseURL = `${webUrl}/-/blob/master`
+    baseURL = `${webUrl}/-/raw/master`
 
     let response = '';
     response = await httpGet(fileUrl, headers);
