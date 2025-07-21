@@ -213,7 +213,7 @@ const generateImages = async (tree, options, onImageGenerated, conf) => {
 const downloadGitLabFile = async (id, file, options) => {
     file = encodeURIComponent(file);
     projectUrl = `${options.GITLAB_URL}/api/v4/projects/${id}`
-    fileUrl = `${options.GITLAB_URL}/api/v4/projects/${id}/repository/files/${file}?ref=master`;
+    fileUrl = `${options.GITLAB_URL}/api/v4/projects/${id}/repository/files/${file}`;
 
     let headers = {
         "PRIVATE-TOKEN": process.env.GITLAB_TOKEN,
@@ -223,10 +223,16 @@ const downloadGitLabFile = async (id, file, options) => {
     project = JSON.parse(projectResp)
 
     webUrl = project["web_url"]
-    baseURL = `${webUrl}/-/raw/master`
+    baseURL = `${webUrl}/-/blob/master`
 
     let response = '';
-    response = await httpGet(fileUrl, headers);
+
+    try {
+    response = await httpGet(fileUrl+"?ref=master", headers);
+    } catch (e) {
+        response = await httpGet(fileUrl+"?ref=main", headers);
+        baseURL = `${webUrl}/-/blob/main`
+    }
 
     response = Buffer.from(response, "base64").toString();
 
